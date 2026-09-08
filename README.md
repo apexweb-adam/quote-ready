@@ -19,12 +19,12 @@ For live voice, provide `ASSEMBLYAI_API_KEY` through a private environment varia
 
 - Original source released under the MIT License.
 - 22 local tests cover intake, HTTP boundaries, audio resampling and parallel tool-result delivery.
-- Live AssemblyAI token minting, session initialization and greeting audio were verified on September 8, 2026. Synthetic speech integration evidence is tracked separately from browser microphone testing.
+- Live AssemblyAI token minting, session initialization, all five field captures and a Friday-to-Monday correction passed on September 8, 2026 using synthesized speech. The correction invalidated the old review. Browser microphone testing remains separate.
 - Real microphone, interruption and browser/device audio QA remain outstanding.
 - Exact transcript matching establishes quote provenance, not semantic correctness of an AI-extracted value. The user must review the values and evidence.
 - Microphone capture resamples device-rate audio to 24 kHz PCM16; playback uses Web Audio buffers at 24 kHz. Browser/device audio QA remains required.
 - No application audio recording or server transcript storage. AssemblyAI handles live audio; its current service terms govern provider processing and retention.
-- Public deployment, video, slides, microphone demo proof and final contest submission receipt remain pending. Event enrollment is separate from submitting the project.
+- A six-slide presentation is included. Secured public live voice hosting, video, microphone demo proof and final contest submission receipt remain pending. Event enrollment is separate from submitting the project.
 
 ## Protocol references
 
@@ -45,3 +45,9 @@ node scripts/live-voice-check.mjs 4318 intake.wav correction.wav evidence.json
 ```
 
 The output labels the input as synthesized speech. Passing requires actual provider transcripts, tool capture of every field, a corrected time, and invalidation of the old review. This is an API integration check, not proof of browser microphone quality.
+
+## Public interactive sample
+
+`node scripts/build-static-demo.mjs` generates `docs/` for GitHub Pages. This version exposes the fictional example, corrections, review and download. It intentionally contains no API token endpoint and does not open a microphone. Run the local server for live voice.
+
+The presentation source uses the optional `pptxgenjs` package: `node scripts/build-deck.cjs presentation/QuoteReady.pptx`.

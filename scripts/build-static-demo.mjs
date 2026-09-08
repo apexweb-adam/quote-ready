@@ -1,0 +1,9 @@
+import { mkdir, copyFile, readFile, writeFile } from 'node:fs/promises';
+const output = new URL('../docs/', import.meta.url), source = new URL('../public/', import.meta.url);
+await mkdir(output, { recursive: true });
+for (const name of ['app.mjs','intake.mjs','tool-results.mjs','audio-worklet.js','style.css']) await copyFile(new URL(name, source),new URL(name, output));
+let html = await readFile(new URL('index.html',source),'utf8');
+html = html.replace('<html lang="en">','<html lang="en" data-mode="sample">').replace('href="/style.css"','href="./style.css"').replace('src="/app.mjs"','src="./app.mjs"').replace('href="/"','href="./"').replace('</footer>',' <a href="https://github.com/apexweb-adam/quote-ready">Source and live voice setup</a></footer>');
+await writeFile(new URL('index.html',output),html);
+await writeFile(new URL('.nojekyll',output),'');
+console.log('Built public sample in docs/; no credentials or token endpoint included.');

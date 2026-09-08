@@ -1,0 +1,137 @@
+{
+  "at": "2026-09-08T07:27:50.265Z",
+  "mode": "live-api-synthetic-speech",
+  "ready": true,
+  "audioBytesReceived": 1986720,
+  "transcripts": [
+    {
+      "speaker": "live-agent",
+      "text": "Hi, I am QuoteReady, an AI intake assistant. What work would you like a service professional to quote for?"
+    },
+    {
+      "speaker": "synthetic-caller",
+      "text": "This is a fictional test. I need a kitchen extractor fan installed. The equipment is a wall-mounted cooker hood. The property is a flat in London. Access is on the 2nd floor with no lift. My preferred time is Friday afternoon."
+    },
+    {
+      "speaker": "live-agent",
+      "text": "I have recorded your request for a kitchen extractor fan installation for a wall mounted cooker hood in London. Access is on the second floor with no lift, and you would prefer Friday afternoon. You can review and download the draft on your screen."
+    },
+    {
+      "speaker": "synthetic-caller",
+      "text": "Please correct the preferred time, Monday morning instead of Friday afternoon."
+    },
+    {
+      "speaker": "live-agent",
+      "text": "I have updated that for you. I now have your request for a kitchen extractor fan installation for a wall mounted cooker hood in London, with access on the second floor and no lift, preferred for Monday morning. You can review and download the updated draft on your screen."
+    }
+  ],
+  "tools": [
+    {
+      "name": "capture_answer",
+      "args": {
+        "evidence": "The equipment is a wall-mounted cooker hood.",
+        "field": "equipment",
+        "status": "known",
+        "value": "wall-mounted cooker hood"
+      }
+    },
+    {
+      "name": "capture_answer",
+      "args": {
+        "evidence": "I need a kitchen extractor fan installed.",
+        "field": "service",
+        "status": "known",
+        "value": "kitchen extractor fan installation"
+      }
+    },
+    {
+      "name": "capture_answer",
+      "args": {
+        "evidence": "My preferred time is Friday afternoon.",
+        "field": "window",
+        "status": "known",
+        "value": "Friday afternoon"
+      }
+    },
+    {
+      "name": "capture_answer",
+      "args": {
+        "evidence": "The property is a flat in London.",
+        "field": "area",
+        "status": "known",
+        "value": "London"
+      }
+    },
+    {
+      "name": "capture_answer",
+      "args": {
+        "evidence": "Access is on the 2nd floor with no lift.",
+        "field": "access",
+        "status": "known",
+        "value": "2nd floor, no lift"
+      }
+    },
+    {
+      "name": "capture_answer",
+      "args": {
+        "evidence": "Monday morning instead of Friday afternoon.",
+        "field": "window",
+        "status": "known",
+        "value": "Monday morning"
+      }
+    }
+  ],
+  "errors": [],
+  "events": [
+    "session.updated",
+    "session.ready",
+    "reply.started",
+    "reply.audio",
+    "transcript.agent.delta",
+    "transcript.agent",
+    "reply.done",
+    "input.speech.started",
+    "transcript.user.delta",
+    "input.speech.stopped",
+    "transcript.user",
+    "tool.call",
+    "session.ended"
+  ],
+  "reason": "capture-and-correction-complete",
+  "result": {
+    "revision": 6,
+    "answers": {
+      "equipment": {
+        "status": "known",
+        "value": "wall-mounted cooker hood",
+        "evidence": "The equipment is a wall-mounted cooker hood."
+      },
+      "service": {
+        "status": "known",
+        "value": "kitchen extractor fan installation",
+        "evidence": "I need a kitchen extractor fan installed."
+      },
+      "window": {
+        "status": "known",
+        "value": "Monday morning",
+        "evidence": "Monday morning instead of Friday afternoon."
+      },
+      "area": {
+        "status": "known",
+        "value": "London",
+        "evidence": "The property is a flat in London."
+      },
+      "access": {
+        "status": "known",
+        "value": "2nd floor, no lift",
+        "evidence": "Access is on the 2nd floor with no lift."
+      }
+    },
+    "missing": [],
+    "followUp": [],
+    "nextQuestion": null,
+    "status": "ready-for-review"
+  },
+  "correctionInvalidatedReview": true,
+  "passed": true
+}
