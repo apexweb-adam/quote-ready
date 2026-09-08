@@ -2,6 +2,8 @@
 .env.*
 !.env.example
 node_modules/
+.netlify/
 *.wav
+!public/fixtures/*.wav
 *.aiff
 .DS_Store

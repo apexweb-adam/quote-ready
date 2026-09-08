@@ -4,7 +4,7 @@ Original AssemblyAI voice-intake prototype. Collects five service-request detail
 
 ## Run
 
-Node.js 20 or newer; no package dependencies.
+Node.js 20 or newer; the local application has no runtime package dependencies. `npm ci` installs the development types used for Netlify deployment.
 
 ```sh
 npm test
@@ -18,13 +18,13 @@ For live voice, provide `ASSEMBLYAI_API_KEY` through a private environment varia
 ## Evidence and limits
 
 - Original source released under the MIT License.
-- 22 local tests cover intake, HTTP boundaries, audio resampling and parallel tool-result delivery.
+- 26 local tests cover intake, review text, HTTP boundaries, hosted access protection, audio resampling and parallel tool-result delivery.
 - Live AssemblyAI token minting, session initialization, all five field captures and a Friday-to-Monday correction passed on September 8, 2026 using synthesized speech. The correction invalidated the old review. Browser microphone testing remains separate.
-- Real microphone, interruption and browser/device audio QA remain outstanding.
+- The public app completed a guided browser voice session, including all five fields and the correction, and exported a 64-second video. Basic microphone connection, transcription and reply were observed separately; broader real-speaker and interruption evaluation remain future work.
 - Exact transcript matching establishes quote provenance, not semantic correctness of an AI-extracted value. The user must review the values and evidence.
 - Microphone capture resamples device-rate audio to 24 kHz PCM16; playback uses Web Audio buffers at 24 kHz. Browser/device audio QA remains required.
-- No application audio recording or server transcript storage. AssemblyAI handles live audio; its current service terms govern provider processing and retention.
-- A six-slide presentation is included. Secured public live voice hosting, video, microphone demo proof and final contest submission receipt remain pending. Event enrollment is separate from submitting the project.
+- No server transcript storage. The optional guided-demo recorder saves only the synthesized caller and agent output in browser memory, with an explicit download. Microphone conversations are not recorded by the app. AssemblyAI handles live audio under its current processing and retention terms.
+- A six-slide presentation, captioned video and protected public voice app are available. A final contest submission receipt remains separate from event enrollment.
 
 ## Protocol references
 
@@ -51,3 +51,12 @@ The output labels the input as synthesized speech. Passing requires actual provi
 `node scripts/build-static-demo.mjs` generates `docs/` for GitHub Pages. This version exposes the fictional example, corrections, review and download. It intentionally contains no API token endpoint and does not open a microphone. Run the local server for live voice.
 
 The presentation source uses the optional `pptxgenjs` package: `node scripts/build-deck.cjs presentation/QuoteReady.pptx`.
+
+## Public voice and recorded demonstration
+
+- Live app: https://quote-ready-voice.netlify.app
+- Captioned recording: https://quote-ready-voice.netlify.app/watch.html
+
+The live app requires a private reviewer invitation code. The same live service supports microphone input or a clearly labelled guided synthetic caller. The recording uses the real session audio, transcripts and state changes; it is not a customer session.
+
+For Netlify deployment, configure `ASSEMBLYAI_API_KEY`, `QUOTEREADY_INVITE_CODE` (at least 16 characters), `QUOTEREADY_ORIGIN` (the exact HTTPS origin), and `QUOTEREADY_INVITE_EXPIRES_AT` privately. The hosted token has a three-minute session cap. The source defines a per-IP rate rule; enforceability must be checked on each target deployment. The dedicated release command is `node scripts/deploy-live.mjs`; it verifies the exact site and tests before uploading both assets and Functions.

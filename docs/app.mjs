@@ -1,11 +1,15 @@
-import { fields, createIntake, addTranscript, capture, inspect, prepareReview, confirmReview, agentConfig } from './intake.mjs';
+import { fields, createIntake, addTranscript, capture, inspect, prepareReview, formatReview, confirmReview, agentConfig } from './intake.mjs';
 import { flushToolResults } from './tool-results.mjs';
+import { startDemoRecording } from './recording.mjs';
 const $ = id => document.getElementById(id);
 let state = createIntake(), configured = false, active = false, ws, context, stream, worklet;
+let requiresInvite = false, maxSessionSeconds = 300;
+let guidedMode = false, guidedStep = 0, guidedTimer, guidedSource, guidedAudio = [], recording, videoUrl, recordingLines = [];
 let playbackAt = 0, sources = new Set(), pending = [], lastTurn = '', calls = new Map(), generation = 0;
 let readyTimer, endTimer;
 const notice = text => { $('notice').textContent = text; };
 function line(speaker, text) {
+  recordingLines.push({speaker,text}); if(recordingLines.length>8)recordingLines.shift();
   $('transcript').querySelector('.empty')?.remove();
   const p = document.createElement('p'), label = document.createElement('span');
   label.className = 'speaker'; label.textContent = speaker;
@@ -30,15 +34,26 @@ function render() {
   $('review').disabled = Boolean(info.missing.length || active);
   $('review-box').hidden = !state.review;
   if (!state.review) { $('approve').checked = false; $('download').disabled = true; }
-  $('start').disabled = active || !configured || !$('consent').checked;
+  $('invite-box').hidden = !requiresInvite;
+  $('start').disabled = active || !configured || !$('consent').checked || (requiresInvite && !$('invite').value.trim());
   $('stop').disabled = !active;
   $('sample').disabled = active;
+  for (const id of ['guided','record-guided']) $(id).disabled = active || !configured || (requiresInvite && !$('invite').value.trim());
 }
 function silence() { for (const src of sources) { try { src.stop(); } catch {} } sources.clear(); playbackAt = context?.currentTime || 0; }
 async function finish(text = 'Conversation ended. Review your captured details.') {
   generation++; active = false; clearTimeout(readyTimer); clearTimeout(endTimer); silence();
+  clearTimeout(guidedTimer); try {guidedSource?.stop();}catch{} guidedSource=null;
   $('consent').checked = false;
   stream?.getTracks().forEach(t => t.stop()); stream = null;
+  if (recording) {
+    const current=recording;recording=null;
+    try {
+      const result=await current.stop();
+      if(videoUrl)URL.revokeObjectURL(videoUrl);videoUrl=URL.createObjectURL(result.blob);
+      $('video-download').href=videoUrl;$('video-download').download=`quoteready-live-demo.${result.extension}`;$('video-download').hidden=false;
+    } catch {text+=' Video export could not be completed.';}
+  }
   worklet?.disconnect(); worklet = null;
   if (context && context.state !== 'closed') await context.close(); context = null;
   const socket = ws; ws = null;
@@ -50,7 +65,7 @@ async function finish(text = 'Conversation ended. Review your captured details.'
 }
 function flush() {
   if (lastTurn !== 'reply.done' || ws?.readyState !== WebSocket.OPEN || !pending.length) return;
-  flushToolResults(pending, lastTurn, event => ws.send(JSON.stringify(event)));
+  return flushToolResults(pending, lastTurn, event => ws.send(JSON.stringify(event)));
 }
 function play(base64) {
   if (!context) return;
@@ -59,27 +74,64 @@ function play(base64) {
   const buffer = context.createBuffer(1, raw.length / 2, 24000), channel = buffer.getChannelData(0);
   for (let i = 0; i < channel.length; i++) { const unsigned = raw.charCodeAt(i * 2) | raw.charCodeAt(i * 2 + 1) << 8; channel[i] = (unsigned > 32767 ? unsigned - 65536 : unsigned) / 32768; }
   const node = context.createBufferSource(); node.buffer = buffer; node.connect(context.destination);
+  if(recording)node.connect(recording.audio);
   sources.add(node); node.onended = () => sources.delete(node);
   playbackAt = Math.max(playbackAt, context.currentTime); node.start(playbackAt); playbackAt += buffer.duration;
 }
-async function start() {
-  if (active || !configured || !$('consent').checked) return;
+function advanceGuided(run) {
+  if (!guidedMode || run!==generation || !context || pending.length) return;
+  const complete=inspect(state).missing.length===0;
+  const next=guidedStep===0?0:guidedStep===1&&complete?1:guidedStep===2&&/monday/i.test(state.answers.window?.value||'')?2:null;
+  if(next===null)return;
+  guidedStep++;clearTimeout(guidedTimer);
+  const wait=Math.max(0,playbackAt-context.currentTime)*1000+700;
+  guidedTimer=setTimeout(async()=>{
+    if(run!==generation||!context)return;
+    if(next===2){
+      // Keep the final real state visible briefly before closing the recording.
+      await finish('Guided live demo complete. Review the actual captured details before downloading the draft.');
+      $('review-text').textContent=formatReview(prepareReview(state));render();return;
+    }
+    const original=guidedAudio[next], padded=context.createBuffer(1,original.length+Math.ceil(context.sampleRate*1.8),context.sampleRate);
+    padded.copyToChannel(original.getChannelData(0),0);
+    guidedSource=context.createBufferSource();guidedSource.buffer=padded;guidedSource.connect(worklet);guidedSource.connect(context.destination);
+    if(recording)guidedSource.connect(recording.audio);
+    guidedSource.start();
+  },wait);
+}
+async function start({guided=false,record=false}={}) {
+  if (active || !configured || (!guided && !$('consent').checked)) return;
   state = createIntake(); $('transcript').replaceChildren();
+  guidedMode=guided;guidedStep=0;recordingLines=[];
+  $('recording-preview').hidden=!record;$('video-download').hidden=true;
   active = true; const run = ++generation;
-  pending = []; calls.clear(); lastTurn = ''; render(); notice('Connecting your microphone…');
+  pending = []; calls.clear(); lastTurn = ''; render(); notice('Preparing your voice session…');
   try {
     context = new AudioContext(); await context.resume();
-    const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-    if (run !== generation) { media.getTracks().forEach(t => t.stop()); return; }
-    stream = media;
+    const headers = { 'X-QuoteReady': 'voice' };
+    if (requiresInvite) headers['X-QuoteReady-Invite'] = $('invite').value.trim();
+    const r = await fetch('/api/token', { method: 'POST', headers });
+    const body = await r.json(); if (!r.ok) throw Error(body.error);
+    if (run !== generation) return;
+    if(guided){
+      notice('Loading the synthesized demonstration caller…');
+      guidedAudio=await Promise.all(['intake','correction'].map(async name=>{
+        const response=await fetch(`/fixtures/${name}.wav`);if(!response.ok)throw Error('Demonstration audio is unavailable.');
+        return context.decodeAudioData(await response.arrayBuffer());
+      }));
+      if(run!==generation)return;
+    } else {
+      notice('Connecting your microphone…');
+      const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+      if (run !== generation) { media.getTracks().forEach(t => t.stop()); return; }
+      stream = media;
+    }
     await context.audioWorklet.addModule('/audio-worklet.js');
     if (run !== generation) return;
     worklet = new AudioWorkletNode(context, 'intake-capture');
-    context.createMediaStreamSource(stream).connect(worklet);
+    if(stream)context.createMediaStreamSource(stream).connect(worklet);
     const mute = context.createGain(); mute.gain.value = 0; worklet.connect(mute).connect(context.destination);
-    const r = await fetch('/api/token', { method: 'POST', headers: { 'X-QuoteReady': 'voice' } });
-    const body = await r.json(); if (!r.ok) throw Error(body.error);
-    if (run !== generation) return;
+    if(record)recording=startDemoRecording($('demo-canvas'),context,()=>({fields,answers:state.answers,lines:recordingLines,ready:inspect(state).missing.length===0}));
     ws = new WebSocket(`wss://agents.assemblyai.com/v1/ws?token=${encodeURIComponent(body.token)}`);
     let ready = false;
     worklet.port.onmessage = ({ data }) => {
@@ -95,17 +147,17 @@ async function start() {
       try {
         const e = JSON.parse(data);
         if (e.type === 'session.ready') {
-          ready = true; clearTimeout(readyTimer); $('connection').textContent = 'Voice connected'; $('mode').textContent = 'Live voice session';
-          notice('Listening. You can interrupt or correct an answer. Sessions end after five minutes.');
-          endTimer = setTimeout(() => finish('Five-minute session ended. Your details remain available for review.'), 300000);
-        } else if (e.type === 'transcript.user') { addTranscript(state, e.text); line('YOU', e.text); }
+          ready = true; clearTimeout(readyTimer); $('connection').textContent = 'Voice connected'; $('mode').textContent = guided?'Live demo · synthetic caller':'Live voice session';
+          notice(guided?'Running the real voice service with synthesized test speech. Your microphone is closed.':`Listening. You can interrupt or correct an answer. Sessions end after ${maxSessionSeconds / 60} minutes.`);
+          endTimer = setTimeout(() => finish('Session time limit reached. Your details remain available for review.'), maxSessionSeconds * 1000);
+        } else if (e.type === 'transcript.user') { addTranscript(state, e.text); line(guided?'SYNTHETIC CALLER':'YOU', e.text); }
         else if (e.type === 'transcript.agent') line('QUOTEREADY', e.text);
         else if (e.type === 'reply.audio') play(e.data);
         else if (e.type === 'input.speech.started' || e.type === 'reply.started') { lastTurn = e.type; if (e.type === 'input.speech.started') silence(); }
         else if (e.type === 'reply.done') {
           lastTurn = e.type;
           if (e.status === 'interrupted') { pending = []; silence(); }
-          else flush();
+          else {const sent=flush();if(!sent)advanceGuided(run);}
         } else if (e.type === 'tool.call') {
           if (calls.has(e.call_id)) return;
           let result;
@@ -124,9 +176,12 @@ async function start() {
     ws.onclose = () => { if (run === generation) finish(); };
   } catch (error) { if (run === generation) await finish(error.message || 'Could not start the voice session.'); }
 }
-$('start').onclick = start;
+$('start').onclick = () => start();
+$('guided').onclick = () => start({guided:true});
+$('record-guided').onclick = () => start({guided:true,record:true});
 $('stop').onclick = () => finish();
 $('consent').onchange = render;
+$('invite').oninput = render;
 $('sample').onclick = () => {
   state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = 'Fictional sample';
   const examples = [
@@ -139,15 +194,14 @@ $('sample').onclick = () => {
   for (const [field, text] of examples) { addTranscript(state, text); line('SAMPLE CALLER', text); capture(state, { field, value: text, status: 'known', evidence: text }); }
   notice('Fictional sample loaded. This did not use a microphone or AssemblyAI. Try correcting a detail, then prepare the review.'); render();
 };
-$('reset').onclick = async () => { await finish('Session cleared.'); state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = 'Local prototype'; render(); };
+$('reset').onclick = async () => { await finish('Session cleared.'); state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = document.documentElement.dataset.mode==='sample'?'Interactive sample':requiresInvite?'Live voice prototype':'Local prototype'; render(); };
 for (const [key, label] of Object.entries(fields)) { const option = document.createElement('option'); option.value = key; option.textContent = label; $('field').append(option); }
 $('correction').onsubmit = e => {
   e.preventDefault(); if (active) return notice('End the conversation before making a manual correction.');
   try { const text = $('value').value.trim(); addTranscript(state, text); capture(state, { field: $('field').value, status: 'known', value: text, evidence: text }); line('MANUAL CORRECTION', text); $('value').value = ''; render(); notice('Correction applied. Review the new version before downloading.'); }
   catch (error) { notice(error.message); }
 };
-function readable(report) { return Object.entries(fields).map(([key, name]) => `${name}: ${report.answers[key].value || report.answers[key].status}`).join('\n\n'); }
-$('review').onclick = () => { try { const review = prepareReview(state); $('review-text').textContent = readable(review); $('approve').checked = false; $('download').disabled = true; render(); } catch (error) { notice(error.message); } };
+$('review').onclick = () => { try { const review = prepareReview(state); $('review-text').textContent = formatReview(review); $('approve').checked = false; $('download').disabled = true; render(); } catch (error) { notice(error.message); } };
 $('approve').onchange = () => { $('download').disabled = !$('approve').checked; };
 $('download').onclick = () => {
   try {
@@ -161,9 +215,16 @@ window.addEventListener('pagehide', () => { stream?.getTracks().forEach(t => t.s
 try {
   if (document.documentElement.dataset.mode === 'sample') {
     $('mode').textContent = 'Interactive sample';
+    document.querySelector('.guided-controls').hidden=true;
     $('consent').closest('label').hidden = true; $('start').hidden = true; $('stop').hidden = true;
     notice('Public sample: try the fictional example, correct a detail and download a reviewed draft. Live voice runs from the repository with your own AssemblyAI access.');
-  } else { const r = await fetch('/api/config'); configured = (await r.json()).liveConfigured; notice(configured ? 'Voice access is configured. Consent and microphone permission are required to start.' : 'Live voice is not configured yet. Explore the fictional example and review workflow.'); }
+  } else {
+    const r = await fetch('/api/config'), config = await r.json();
+    configured = config.liveConfigured; requiresInvite = config.requiresInvite === true;
+    if(requiresInvite)$('mode').textContent='Live voice prototype';
+    maxSessionSeconds = Number.isFinite(config.maxSessionSeconds) ? Math.min(300,Math.max(60,config.maxSessionSeconds)) : 300;
+    notice(configured ? 'Voice access is configured. Consent and microphone permission are required to start.' : 'Live voice is not configured yet. Explore the fictional example and review workflow.');
+  }
 }
 catch { notice('Local server unavailable. Restart the app.'); }
 render();

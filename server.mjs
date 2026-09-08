@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 export function makeServer({ apiKey = process.env.ASSEMBLYAI_API_KEY, fetcher = fetch } = {}) {
   let tokenAt = 0;
   const files = new Map([['/', ['index.html','text/html']], ['/app.mjs',['app.mjs','text/javascript']], ['/intake.mjs',['intake.mjs','text/javascript']], ['/tool-results.mjs',['tool-results.mjs','text/javascript']], ['/audio-worklet.js',['audio-worklet.js','text/javascript']], ['/style.css',['style.css','text/css']]]);
+  files.set('/recording.mjs',['recording.mjs','text/javascript']);
+  for (const name of ['intake.wav','correction.wav']) files.set(`/fixtures/${name}`,[`fixtures/${name}`,'audio/wav']);
   return http.createServer(async (req, res) => {
     const respond = (code, data) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
     const expectedHost = `127.0.0.1:${req.socket.localPort}`;

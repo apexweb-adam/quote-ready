@@ -38,6 +38,9 @@ export function prepareReview(state) {
   state.review = structuredClone({ ...report, preparedAt: new Date().toISOString() });
   return state.review;
 }
+export function formatReview(report) {
+  return Object.entries(fields).map(([key,label]) => `${label}: ${report.answers[key].value || report.answers[key].status}`).join('\n\n');
+}
 export function confirmReview(state, revision, approved) {
   if (approved !== true) throw Error('Explicit user review is required');
   if (!state.review || revision !== state.revision || state.review.revision !== revision) throw Error('The draft changed. Review the current version first');
