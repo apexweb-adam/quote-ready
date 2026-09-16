@@ -11,3 +11,7 @@ The core verifies exact quote provenance, not semantic correctness, human identi
 Keep API credentials on the server. Keep per-session tokens short-lived. Do not weaken loopback-only local hosting, invitation checks, origin validation or consent prompts to make a demo easier to access. Do not render untrusted text as HTML. Do not collect or commit unnecessary personal data. Real provider processing and retention are separate from local application storage.
 
 Never run untrusted pull-request code with deployment keys or production secrets. CI for this change has read-only repository permissions, pinned action commits, no paid-provider calls and no publishing/deployment step.
+
+## Review scope and reproducible checks
+
+See [the threat model](security/THREAT-MODEL.md) and [scoped review plan](security/REVIEW-PLAN.md). These are maintainer review materials, not certification or a completed Codex Security scan. Browser privacy checks use only synthetic local data; no production secrets or paid-provider calls are needed.

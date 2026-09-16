@@ -6,7 +6,7 @@ let state = createIntake(), configured = false, active = false, ws, context, str
 let requiresInvite = false, maxSessionSeconds = 300;
 let guidedMode = false, guidedStep = 0, guidedTimer, guidedSource, guidedAudio = [], recording, videoUrl, recordingLines = [];
 let playbackAt = 0, sources = new Set(), pending = [], lastTurn = '', calls = new Map(), generation = 0;
-let readyTimer, endTimer;
+let readyTimer, endTimer, finishTask;
 const notice = text => { $('notice').textContent = text; };
 function line(speaker, text) {
   recordingLines.push({speaker,text}); if(recordingLines.length>8)recordingLines.shift();
@@ -17,7 +17,7 @@ function line(speaker, text) {
   $('transcript').scrollTop = $('transcript').scrollHeight;
 }
 function render() {
-  const info = inspect(state);
+  const info = inspect(state), busy = active || Boolean(finishTask);
   $('answers').replaceChildren();
   for (const [key, label] of Object.entries(fields)) {
     const a = info.answers[key], row = document.createElement('div'); row.className = 'answer';
@@ -31,17 +31,23 @@ function render() {
   }
   $('progress').textContent = `${5 - info.missing.length} / 5 captured`;
   $('readiness').textContent = info.missing.length ? `Next detail: ${fields[info.missing[0]]}` : info.followUp.length ? 'All fields addressed. Some details need a professional’s follow-up.' : 'Details captured. Review before downloading.';
-  $('review').disabled = Boolean(info.missing.length || active);
+  $('review').disabled = Boolean(info.missing.length || busy);
   $('review-box').hidden = !state.review;
-  if (!state.review) { $('approve').checked = false; $('download').disabled = true; }
+  if (!state.review) { $('review-text').textContent = ''; $('approve').checked = false; $('download').disabled = true; }
   $('invite-box').hidden = !requiresInvite;
-  $('start').disabled = active || !configured || !$('consent').checked || (requiresInvite && !$('invite').value.trim());
+  $('start').disabled = busy || !configured || !$('consent').checked || (requiresInvite && !$('invite').value.trim());
   $('stop').disabled = !active;
-  $('sample').disabled = active;
-  for (const id of ['guided','record-guided']) $(id).disabled = active || !configured || (requiresInvite && !$('invite').value.trim());
+  $('sample').disabled = busy;
+  for (const id of ['guided','record-guided']) $(id).disabled = busy || !configured || (requiresInvite && !$('invite').value.trim());
 }
 function silence() { for (const src of sources) { try { src.stop(); } catch {} } sources.clear(); playbackAt = context?.currentTime || 0; }
-async function finish(text = 'Conversation ended. Review your captured details.') {
+function finish(text = 'Conversation ended. Review your captured details.') {
+  if (finishTask) return finishTask;
+  finishTask = finishSession(text).finally(() => { finishTask = null; render(); });
+  render();
+  return finishTask;
+}
+async function finishSession(text) {
   generation++; active = false; clearTimeout(readyTimer); clearTimeout(endTimer); silence();
   clearTimeout(guidedTimer); try {guidedSource?.stop();}catch{} guidedSource=null;
   $('consent').checked = false;
@@ -100,7 +106,7 @@ function advanceGuided(run) {
   },wait);
 }
 async function start({guided=false,record=false}={}) {
-  if (active || !configured || (!guided && !$('consent').checked)) return;
+  if (active || finishTask || !configured || (!guided && !$('consent').checked)) return;
   state = createIntake(); $('transcript').replaceChildren();
   guidedMode=guided;guidedStep=0;recordingLines=[];
   $('recording-preview').hidden=!record;$('video-download').hidden=true;
@@ -183,6 +189,7 @@ $('stop').onclick = () => finish();
 $('consent').onchange = render;
 $('invite').oninput = render;
 $('sample').onclick = () => {
+  if (active || finishTask) return;
   state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = 'Fictional sample';
   const examples = [
     ['service', 'I need a quote to install a kitchen extractor fan.'],
@@ -194,10 +201,25 @@ $('sample').onclick = () => {
   for (const [field, text] of examples) { addTranscript(state, text); line('SAMPLE CALLER', text); capture(state, { field, value: text, status: 'known', evidence: text }); }
   notice('Fictional sample loaded. This did not use a microphone or AssemblyAI. Try correcting a detail, then prepare the review.'); render();
 };
-$('reset').onclick = async () => { await finish('Session cleared.'); state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = document.documentElement.dataset.mode==='sample'?'Interactive sample':requiresInvite?'Live voice prototype':'Local prototype'; render(); };
+$('reset').onclick = async () => {
+  // Join any in-flight recorder shutdown before removing session artifacts.
+  await finish('Session cleared.');
+  const link = $('video-download'), previousUrl = videoUrl || link.getAttribute('href');
+  if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
+  videoUrl = undefined; recordingLines = []; guidedAudio = []; guidedStep = 0; guidedMode = false;
+  link.removeAttribute('href'); link.removeAttribute('download'); link.hidden = true;
+  $('recording-preview').hidden = true;
+  const canvas = $('demo-canvas'); canvas.width = canvas.width;
+  $('value').value = ''; $('invite').value = ''; $('field').selectedIndex = 0;
+  $('review-text').textContent = ''; $('transcript').replaceChildren();
+  state = createIntake();
+  $('mode').textContent = document.documentElement.dataset.mode==='sample'?'Interactive sample':requiresInvite?'Live voice prototype':'Local prototype';
+  notice('Session cleared. Previously downloaded files and provider-held data are not deleted.');
+  render();
+};
 for (const [key, label] of Object.entries(fields)) { const option = document.createElement('option'); option.value = key; option.textContent = label; $('field').append(option); }
 $('correction').onsubmit = e => {
-  e.preventDefault(); if (active) return notice('End the conversation before making a manual correction.');
+  e.preventDefault(); if (active || finishTask) return notice('End the conversation before making a manual correction.');
   try { const text = $('value').value.trim(); addTranscript(state, text); capture(state, { field: $('field').value, status: 'known', value: text, evidence: text }); line('MANUAL CORRECTION', text); $('value').value = ''; render(); notice('Correction applied. Review the new version before downloading.'); }
   catch (error) { notice(error.message); }
 };
