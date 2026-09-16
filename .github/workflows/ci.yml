@@ -1,0 +1,47 @@
+name: QuoteReady CI
+on:
+  push:
+    branches: ['codex/assemblyai-entry', 'maintenance/oss-readiness-2026-09-16']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quoteready-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Check generated core assets
+        run: node scripts/sync-intake-core.mjs --check
+      - name: Existing and new repository tests
+        run: npm test
+      - name: Run the credential-free example
+        run: node examples/intake-core.mjs
+      - name: Build and validate static sample core
+        run: |
+          node scripts/build-static-demo.mjs
+          node scripts/sync-intake-core.mjs --check
+          git diff --exit-code -- public/intake-core.mjs docs/intake-core.mjs docs/assemblyai-config.mjs docs/intake.mjs
+      - name: Inspect and smoke-test the unpublished local package
+        run: |
+          mkdir -p "$RUNNER_TEMP/quoteready-package"
+          npm pack ./packages/intake-core --ignore-scripts --pack-destination "$RUNNER_TEMP/quoteready-package"
+          tar -xzf "$RUNNER_TEMP"/quoteready-package/*.tgz -C "$RUNNER_TEMP/quoteready-package"
+          node --input-type=module -e 'const m = await import(process.argv[1]); if (m.createSession().inspect().missing.length !== 5) process.exit(1); console.log("Packed module import passed.");' "$RUNNER_TEMP/quoteready-package/package/index.mjs"
+      - name: Validate TypeScript declarations
+        if: matrix.node == '22'
+        run: npm exec --yes --package=typescript@5.8.3 -- tsc --strict --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 test-types/intake-core.mts

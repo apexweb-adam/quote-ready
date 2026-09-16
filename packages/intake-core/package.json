@@ -1,0 +1,31 @@
+{
+  "name": "quoteready-intake-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider-independent, evidence-linked intake and explicit-review state machine",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./index.mjs",
+  "types": "./index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./index.d.mts",
+      "import": "./index.mjs"
+    }
+  },
+  "files": [
+    "index.mjs",
+    "index.d.mts",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apexweb-adam/quote-ready.git",
+    "directory": "packages/intake-core"
+  }
+}
