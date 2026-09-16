@@ -6,7 +6,7 @@ let state = createIntake(), configured = false, active = false, ws, context, str
 let requiresInvite = false, maxSessionSeconds = 300;
 let guidedMode = false, guidedStep = 0, guidedTimer, guidedSource, guidedAudio = [], recording, videoUrl, recordingLines = [];
 let playbackAt = 0, sources = new Set(), pending = [], lastTurn = '', calls = new Map(), generation = 0;
-let readyTimer, endTimer, finishTask;
+let readyTimer, endTimer, finishTask, startupAbort;
 const notice = text => { $('notice').textContent = text; };
 function line(speaker, text) {
   recordingLines.push({speaker,text}); if(recordingLines.length>8)recordingLines.shift();
@@ -47,27 +47,59 @@ function finish(text = 'Conversation ended. Review your captured details.') {
   render();
   return finishTask;
 }
+// A rejected or stalled browser resource must not block unrelated cleanup.
+function stopMediaTracks(media) {
+  let ok = true;
+  try { for (const track of media?.getTracks() || []) { try { track.stop(); } catch { ok = false; } } }
+  catch { ok = false; }
+  return ok;
+}
+function closeTransport(socket) {
+  let ok = true;
+  try { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'session.end' })); }
+  catch { ok = false; }
+  try { socket?.close(); } catch { ok = false; }
+  return ok;
+}
+function settleShutdown(action) {
+  let timer;
+  const operation = (async () => {
+    try { return { ok: true, value: await action() }; }
+    catch { return { ok: false }; }
+  })();
+  const deadline = new Promise(resolve => { timer = setTimeout(() => resolve({ ok: false }), 3000); });
+  // The rejected/late operation stays observed but cannot update the UI later.
+  return Promise.race([operation, deadline]).finally(() => clearTimeout(timer));
+}
 async function finishSession(text) {
   generation++; active = false; clearTimeout(readyTimer); clearTimeout(endTimer); silence();
   clearTimeout(guidedTimer); try {guidedSource?.stop();}catch{} guidedSource=null;
   $('consent').checked = false;
-  stream?.getTracks().forEach(t => t.stop()); stream = null;
-  if (recording) {
-    const current=recording;recording=null;
-    try {
-      const result=await current.stop();
-      if(videoUrl)URL.revokeObjectURL(videoUrl);videoUrl=URL.createObjectURL(result.blob);
-      $('video-download').href=videoUrl;$('video-download').download=`quoteready-live-demo.${result.extension}`;$('video-download').hidden=false;
-    } catch {text+=' Video export could not be completed.';}
+  const ended = { stream, worklet, context, socket: ws, recording, startupAbort };
+  stream = null; worklet = null; context = null; ws = null; recording = null; startupAbort = null;
+  pending = []; calls.clear();
+  let clean = true;
+  try { ended.startupAbort?.abort(); } catch { clean = false; }
+  if (!stopMediaTracks(ended.stream)) clean = false;
+  try { ended.worklet?.disconnect(); } catch { clean = false; }
+  // Close transport before waiting for audio or recorder completion.
+  if (!closeTransport(ended.socket)) clean = false;
+  $('connection').textContent = 'Not connected';
+  const exportTask = ended.recording ? settleShutdown(() => ended.recording.stop()) : Promise.resolve({ ok: true });
+  const audioTask = ended.context && ended.context.state !== 'closed'
+    ? settleShutdown(() => ended.context.close()) : Promise.resolve({ ok: true });
+  const [exportResult, audioResult] = await Promise.all([exportTask, audioTask]);
+  if (ended.recording) {
+    if (exportResult.ok) {
+      try {
+        const result = exportResult.value;
+        if(videoUrl)URL.revokeObjectURL(videoUrl);videoUrl=URL.createObjectURL(result.blob);
+        $('video-download').href=videoUrl;$('video-download').download=`quoteready-live-demo.${result.extension}`;$('video-download').hidden=false;
+      } catch { text += ' Video export could not be completed.'; }
+    } else text += ' Video export could not be completed.';
   }
-  worklet?.disconnect(); worklet = null;
-  if (context && context.state !== 'closed') await context.close(); context = null;
-  const socket = ws; ws = null;
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'session.end' }));
-    setTimeout(() => socket.close(), 1000);
-  } else socket?.close();
-  pending = []; calls.clear(); $('connection').textContent = 'Not connected'; notice(text); render();
+  if (!clean || !audioResult.ok) text += ' Some browser resources did not close cleanly. Reload this tab before another voice session.';
+  notice(text); render();
 }
 function flush() {
   if (lastTurn !== 'reply.done' || ws?.readyState !== WebSocket.OPEN || !pending.length) return;
@@ -113,23 +145,29 @@ async function start({guided=false,record=false}={}) {
   active = true; const run = ++generation;
   pending = []; calls.clear(); lastTurn = ''; render(); notice('Preparing your voice session…');
   try {
-    context = new AudioContext(); await context.resume();
+    const controller = startupAbort = new AbortController();
+    const sessionContext = context = new AudioContext();
+    await sessionContext.resume();
+    if (run !== generation || controller.signal.aborted) return;
     const headers = { 'X-QuoteReady': 'voice' };
     if (requiresInvite) headers['X-QuoteReady-Invite'] = $('invite').value.trim();
-    const r = await fetch('/api/token', { method: 'POST', headers });
+    const r = await fetch('/api/token', { method: 'POST', headers, signal: controller.signal });
     const body = await r.json(); if (!r.ok) throw Error(body.error);
     if (run !== generation) return;
     if(guided){
       notice('Loading the synthesized demonstration caller…');
-      guidedAudio=await Promise.all(['intake','correction'].map(async name=>{
-        const response=await fetch(`/fixtures/${name}.wav`);if(!response.ok)throw Error('Demonstration audio is unavailable.');
-        return context.decodeAudioData(await response.arrayBuffer());
+      const decodedAudio=await Promise.all(['intake','correction'].map(async name=>{
+        const response=await fetch(`/fixtures/${name}.wav`, { signal: controller.signal });if(!response.ok)throw Error('Demonstration audio is unavailable.');
+        const bytes=await response.arrayBuffer();
+        if(run!==generation || controller.signal.aborted)throw Error('Session cancelled');
+        return sessionContext.decodeAudioData(bytes);
       }));
       if(run!==generation)return;
+      guidedAudio=decodedAudio;
     } else {
       notice('Connecting your microphone…');
       const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-      if (run !== generation) { media.getTracks().forEach(t => t.stop()); return; }
+      if (run !== generation) { stopMediaTracks(media); return; }
       stream = media;
     }
     await context.audioWorklet.addModule('/audio-worklet.js');
@@ -233,7 +271,7 @@ $('download').onclick = () => {
     notice('Reviewed draft downloaded. No request has been sent and no booking has been made.');
   } catch (error) { notice(error.message); }
 };
-window.addEventListener('pagehide', () => { stream?.getTracks().forEach(t => t.stop()); if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'session.end' })); ws?.close(); });
+window.addEventListener('pagehide', () => { generation++; try { startupAbort?.abort(); } catch {} stopMediaTracks(stream); closeTransport(ws); });
 try {
   if (document.documentElement.dataset.mode === 'sample') {
     $('mode').textContent = 'Interactive sample';
