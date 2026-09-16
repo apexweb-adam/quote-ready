@@ -1,8 +1,20 @@
 # QuoteReady intake core
 
-Provider-independent JavaScript state machine for five-field service-request intake. MIT licensed; zero runtime dependencies. This is an **unpublished, pre-release module**, not an established infrastructure package. `private: true` intentionally prevents an accidental registry publication.
+Provider-independent JavaScript state machine for five-field service-request intake. MIT licensed; zero runtime dependencies. This is the **0.1.0-rc.1 evaluation preview**, distributed as a GitHub prerelease, not an npm registry listing or a production-stability promise. `private: true` intentionally prevents accidental registry publication. Node.js 22 and 24 are the tested release targets. No independent adoption is claimed.
 
-Use directly from a checkout:
+Install the release archive into your own disposable project, then import by package name:
+
+```sh
+npm install --ignore-scripts --no-audit --no-fund ./quoteready-intake-core-0.1.0-rc.1.tgz
+```
+
+```js
+import { createSession } from 'quoteready-intake-core';
+```
+
+The archive, checksums, evaluation instructions and consumer tests are on the [GitHub preview release](https://github.com/apexweb-adam/quote-ready/releases/tag/intake-core-v0.1.0-rc.1).
+
+Alternatively, use directly from a checkout:
 
 ```js
 import { createSession } from './packages/intake-core/index.mjs';
@@ -34,4 +46,4 @@ The browser adapter's voice-provider configuration remains separate. Browser mic
 npm pack ./packages/intake-core --ignore-scripts --pack-destination /tmp
 ```
 
-Inspect the resulting archive before use. No npm listing, registry downloads, external users, or adoption are claimed. Review package ownership, versioning, documentation and security before removing the publication guard. Keep the MIT notice when redistributing code.
+Inspect the resulting archive before use. No npm listing, registry downloads, external users, or adoption are claimed. Do not remove the npm-publication guard as part of evaluating this preview. The release does not merge the larger application PR or deploy the hosted voice app. Keep the MIT notice when redistributing code.

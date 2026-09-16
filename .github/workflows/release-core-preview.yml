@@ -1,0 +1,151 @@
+name: Release requested intake core preview
+on:
+  push:
+    branches: ['release/intake-core-v0.1.0-rc.1']
+    paths: ['.github/workflows/release-core-preview.yml']
+permissions:
+  contents: read
+concurrency:
+  group: intake-core-v0.1.0-rc.1
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'apexweb-adam/quote-ready' && contains(github.event.head_commit.message, '[publish-core-preview]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Verify unchanged executable source and run the full suite
+        run: |
+          set -euo pipefail
+          test "$(git hash-object packages/intake-core/index.mjs)" = '4a181dc2ae59f06074b5f6a44626bcb62b9fd151'
+          test "$(git hash-object packages/intake-core/index.d.mts)" = '211fe19e73bc8d4549b704589ce43f5fa7f3d50a'
+          node scripts/sync-intake-core.mjs --check
+          node --test --test-reporter=tap test/*.test.mjs | tee "$RUNNER_TEMP/runtime.tap"
+          node examples/intake-core.mjs
+          node scripts/build-static-demo.mjs
+          node scripts/sync-intake-core.mjs --check
+          git diff --exit-code -- public/intake-core.mjs docs/intake-core.mjs docs/assemblyai-config.mjs docs/intake.mjs
+      - name: Pack and validate the exact distribution
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          npm pack ./packages/intake-core --ignore-scripts --pack-destination "$RUNNER_TEMP/release-assets"
+          python3 scripts/check-release-package.py "$RUNNER_TEMP/release-assets/quoteready-intake-core-0.1.0-rc.1.tgz"
+      - name: Install in a clean consumer project and verify public API and types
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cp test-release/consumer.test.mjs test-release/consumer-types.mts "$RUNNER_TEMP/consumer/"
+          cd "$RUNNER_TEMP/consumer"
+          npm init -y >/dev/null
+          npm install --offline --ignore-scripts --no-audit --no-fund --package-lock=false "$RUNNER_TEMP/release-assets/quoteready-intake-core-0.1.0-rc.1.tgz"
+          node --test --test-reporter=tap consumer.test.mjs | tee "$RUNNER_TEMP/consumer.tap"
+          npm exec --yes --package=typescript@5.8.3 -- tsc --strict --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 consumer-types.mts
+      - name: Prepare checksummed evidence and evaluation files
+        if: matrix.node == '22'
+        run: |
+          set -euo pipefail
+          cp test-release/consumer.test.mjs test-release/consumer-types.mts "$RUNNER_TEMP/release-assets/"
+          cp release/CORE-PREVIEW.md "$RUNNER_TEMP/release-assets/QUICKSTART.md"
+          cp release/RELEASE-NOTES.md "$RUNNER_TEMP/release-assets/RELEASE-NOTES.md"
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, pathlib, re, subprocess
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          counts={}
+          for name,expected in [('runtime',47),('consumer',6)]:
+              text=(root/(name+'.tap')).read_text()
+              values={k:int(re.search(r'^# '+k+r' (\d+)$',text,re.M).group(1)) for k in ['tests','pass','fail','skipped']}
+              assert values=={'tests':expected,'pass':expected,'fail':0,'skipped':0},values
+              counts[name]=values
+          data={'source_commit':os.environ['GITHUB_SHA'],'tag':'intake-core-v0.1.0-rc.1','source_core_git_blob':'4a181dc2ae59f06074b5f6a44626bcb62b9fd151','workflow_run':os.environ['GITHUB_SERVER_URL']+'/'+os.environ['GITHUB_REPOSITORY']+'/actions/runs/'+os.environ['GITHUB_RUN_ID'],'packaged_on_node':subprocess.check_output(['node','--version'],text=True).strip(),'recorded_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'tests_on_packaging_job':counts,'external_adoption_established':False,'codex_security_scan_performed':False,'scope':'AI-assisted maintainer evaluation preview; no deployment or registry publication.'}
+          out=root/'release-assets'
+          (out/'release-provenance.json').write_text(json.dumps(data,indent=2)+'\n')
+          lines=[hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name for p in sorted(out.iterdir()) if p.is_file() and p.name!='SHA256SUMS.txt']
+          (out/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+          print(json.dumps(data,indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: matrix.node == '22'
+        with:
+          name: intake-core-preview
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+  browser:
+    if: github.repository == 'apexweb-adam/quote-ready' && contains(github.event.head_commit.message, '[publish-core-preview]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify offline Chromium flows using synthetic fixtures only
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/browser-env"
+          "$RUNNER_TEMP/browser-env/bin/pip" install playwright==1.61.0
+          "$RUNNER_TEMP/browser-env/bin/python" -m playwright install --with-deps chromium
+          node scripts/build-static-demo.mjs
+          "$RUNNER_TEMP/browser-env/bin/python" -m unittest discover -s test-browser -v
+  publish:
+    needs: [verify, browser]
+    if: github.repository == 'apexweb-adam/quote-ready' && github.ref == 'refs/heads/release/intake-core-v0.1.0-rc.1' && contains(github.event.head_commit.message, '[publish-core-preview]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: intake-core-preview
+          path: ${{ runner.temp }}/release-assets
+      - name: Verify artifact, then publish only this requested GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: apexweb-adam/quote-ready
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release-assets"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          files={p.name for p in pathlib.Path('.').iterdir()}
+          expected={'quoteready-intake-core-0.1.0-rc.1.tgz','consumer.test.mjs','consumer-types.mts','QUICKSTART.md','RELEASE-NOTES.md','release-provenance.json','SHA256SUMS.txt'}
+          assert files==expected,files
+          assert all(p.is_file() and not p.is_symlink() for p in pathlib.Path('.').iterdir())
+          data=json.loads(pathlib.Path('release-provenance.json').read_text())
+          assert data['source_commit']==os.environ['SOURCE_SHA']
+          assert data['tag']=='intake-core-v0.1.0-rc.1'
+          assert re.fullmatch('[0-9a-f]{40}',os.environ['SOURCE_SHA'])
+          lines=pathlib.Path('SHA256SUMS.txt').read_text().splitlines()
+          assert len(lines)==6
+          assert {line.split('  ')[1] for line in lines}==expected-{'SHA256SUMS.txt'}
+          assert all(re.fullmatch('[0-9a-f]{64}  [A-Za-z0-9._-]+',line) for line in lines)
+          PY
+          sha256sum -c SHA256SUMS.txt
+          TAG=intake-core-v0.1.0-rc.1
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite or duplicate it.' >&2
+            exit 1
+          fi
+          gh release create "$TAG" ./* --target "$SOURCE_SHA" --title 'QuoteReady intake core 0.1.0-rc.1 — evaluation preview' --notes-file RELEASE-NOTES.md --prerelease --latest=false --draft
+          gh release edit "$TAG" --draft=false --prerelease --latest=false
+          gh release view "$TAG" --json url,isDraft,isPrerelease,tagName,assets

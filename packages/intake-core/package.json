@@ -1,12 +1,12 @@
 {
   "name": "quoteready-intake-core",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "private": true,
   "description": "Provider-independent, evidence-linked intake and explicit-review state machine",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": "^22.0.0 || ^24.0.0"
   },
   "main": "./index.mjs",
   "types": "./index.d.mts",
