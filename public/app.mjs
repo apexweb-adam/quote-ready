@@ -6,7 +6,7 @@ let state = createIntake(), configured = false, active = false, ws, context, str
 let requiresInvite = false, maxSessionSeconds = 300;
 let guidedMode = false, guidedStep = 0, guidedTimer, guidedSource, guidedAudio = [], recording, videoUrl, recordingLines = [];
 let playbackAt = 0, sources = new Set(), pending = [], lastTurn = '', calls = new Map(), generation = 0;
-let readyTimer, endTimer;
+let readyTimer, endTimer, finishTask, startupAbort;
 const notice = text => { $('notice').textContent = text; };
 function line(speaker, text) {
   recordingLines.push({speaker,text}); if(recordingLines.length>8)recordingLines.shift();
@@ -17,7 +17,7 @@ function line(speaker, text) {
   $('transcript').scrollTop = $('transcript').scrollHeight;
 }
 function render() {
-  const info = inspect(state);
+  const info = inspect(state), busy = active || Boolean(finishTask);
   $('answers').replaceChildren();
   for (const [key, label] of Object.entries(fields)) {
     const a = info.answers[key], row = document.createElement('div'); row.className = 'answer';
@@ -31,37 +31,75 @@ function render() {
   }
   $('progress').textContent = `${5 - info.missing.length} / 5 captured`;
   $('readiness').textContent = info.missing.length ? `Next detail: ${fields[info.missing[0]]}` : info.followUp.length ? 'All fields addressed. Some details need a professional’s follow-up.' : 'Details captured. Review before downloading.';
-  $('review').disabled = Boolean(info.missing.length || active);
+  $('review').disabled = Boolean(info.missing.length || busy);
   $('review-box').hidden = !state.review;
-  if (!state.review) { $('approve').checked = false; $('download').disabled = true; }
+  if (!state.review) { $('review-text').textContent = ''; $('approve').checked = false; $('download').disabled = true; }
   $('invite-box').hidden = !requiresInvite;
-  $('start').disabled = active || !configured || !$('consent').checked || (requiresInvite && !$('invite').value.trim());
+  $('start').disabled = busy || !configured || !$('consent').checked || (requiresInvite && !$('invite').value.trim());
   $('stop').disabled = !active;
-  $('sample').disabled = active;
-  for (const id of ['guided','record-guided']) $(id).disabled = active || !configured || (requiresInvite && !$('invite').value.trim());
+  $('sample').disabled = busy;
+  for (const id of ['guided','record-guided']) $(id).disabled = busy || !configured || (requiresInvite && !$('invite').value.trim());
 }
 function silence() { for (const src of sources) { try { src.stop(); } catch {} } sources.clear(); playbackAt = context?.currentTime || 0; }
-async function finish(text = 'Conversation ended. Review your captured details.') {
+function finish(text = 'Conversation ended. Review your captured details.') {
+  if (finishTask) return finishTask;
+  finishTask = finishSession(text).finally(() => { finishTask = null; render(); });
+  render();
+  return finishTask;
+}
+// A rejected or stalled browser resource must not block unrelated cleanup.
+function stopMediaTracks(media) {
+  let ok = true;
+  try { for (const track of media?.getTracks() || []) { try { track.stop(); } catch { ok = false; } } }
+  catch { ok = false; }
+  return ok;
+}
+function closeTransport(socket) {
+  let ok = true;
+  try { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'session.end' })); }
+  catch { ok = false; }
+  try { socket?.close(); } catch { ok = false; }
+  return ok;
+}
+function settleShutdown(action) {
+  let timer;
+  const operation = (async () => {
+    try { return { ok: true, value: await action() }; }
+    catch { return { ok: false }; }
+  })();
+  const deadline = new Promise(resolve => { timer = setTimeout(() => resolve({ ok: false }), 3000); });
+  // The rejected/late operation stays observed but cannot update the UI later.
+  return Promise.race([operation, deadline]).finally(() => clearTimeout(timer));
+}
+async function finishSession(text) {
   generation++; active = false; clearTimeout(readyTimer); clearTimeout(endTimer); silence();
   clearTimeout(guidedTimer); try {guidedSource?.stop();}catch{} guidedSource=null;
   $('consent').checked = false;
-  stream?.getTracks().forEach(t => t.stop()); stream = null;
-  if (recording) {
-    const current=recording;recording=null;
-    try {
-      const result=await current.stop();
-      if(videoUrl)URL.revokeObjectURL(videoUrl);videoUrl=URL.createObjectURL(result.blob);
-      $('video-download').href=videoUrl;$('video-download').download=`quoteready-live-demo.${result.extension}`;$('video-download').hidden=false;
-    } catch {text+=' Video export could not be completed.';}
+  const ended = { stream, worklet, context, socket: ws, recording, startupAbort };
+  stream = null; worklet = null; context = null; ws = null; recording = null; startupAbort = null;
+  pending = []; calls.clear();
+  let clean = true;
+  try { ended.startupAbort?.abort(); } catch { clean = false; }
+  if (!stopMediaTracks(ended.stream)) clean = false;
+  try { ended.worklet?.disconnect(); } catch { clean = false; }
+  // Close transport before waiting for audio or recorder completion.
+  if (!closeTransport(ended.socket)) clean = false;
+  $('connection').textContent = 'Not connected';
+  const exportTask = ended.recording ? settleShutdown(() => ended.recording.stop()) : Promise.resolve({ ok: true });
+  const audioTask = ended.context && ended.context.state !== 'closed'
+    ? settleShutdown(() => ended.context.close()) : Promise.resolve({ ok: true });
+  const [exportResult, audioResult] = await Promise.all([exportTask, audioTask]);
+  if (ended.recording) {
+    if (exportResult.ok) {
+      try {
+        const result = exportResult.value;
+        if(videoUrl)URL.revokeObjectURL(videoUrl);videoUrl=URL.createObjectURL(result.blob);
+        $('video-download').href=videoUrl;$('video-download').download=`quoteready-live-demo.${result.extension}`;$('video-download').hidden=false;
+      } catch { text += ' Video export could not be completed.'; }
+    } else text += ' Video export could not be completed.';
   }
-  worklet?.disconnect(); worklet = null;
-  if (context && context.state !== 'closed') await context.close(); context = null;
-  const socket = ws; ws = null;
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'session.end' }));
-    setTimeout(() => socket.close(), 1000);
-  } else socket?.close();
-  pending = []; calls.clear(); $('connection').textContent = 'Not connected'; notice(text); render();
+  if (!clean || !audioResult.ok) text += ' Some browser resources did not close cleanly. Reload this tab before another voice session.';
+  notice(text); render();
 }
 function flush() {
   if (lastTurn !== 'reply.done' || ws?.readyState !== WebSocket.OPEN || !pending.length) return;
@@ -100,30 +138,36 @@ function advanceGuided(run) {
   },wait);
 }
 async function start({guided=false,record=false}={}) {
-  if (active || !configured || (!guided && !$('consent').checked)) return;
+  if (active || finishTask || !configured || (!guided && !$('consent').checked)) return;
   state = createIntake(); $('transcript').replaceChildren();
   guidedMode=guided;guidedStep=0;recordingLines=[];
   $('recording-preview').hidden=!record;$('video-download').hidden=true;
   active = true; const run = ++generation;
   pending = []; calls.clear(); lastTurn = ''; render(); notice('Preparing your voice session…');
   try {
-    context = new AudioContext(); await context.resume();
+    const controller = startupAbort = new AbortController();
+    const sessionContext = context = new AudioContext();
+    await sessionContext.resume();
+    if (run !== generation || controller.signal.aborted) return;
     const headers = { 'X-QuoteReady': 'voice' };
     if (requiresInvite) headers['X-QuoteReady-Invite'] = $('invite').value.trim();
-    const r = await fetch('/api/token', { method: 'POST', headers });
+    const r = await fetch('/api/token', { method: 'POST', headers, signal: controller.signal });
     const body = await r.json(); if (!r.ok) throw Error(body.error);
     if (run !== generation) return;
     if(guided){
       notice('Loading the synthesized demonstration caller…');
-      guidedAudio=await Promise.all(['intake','correction'].map(async name=>{
-        const response=await fetch(`/fixtures/${name}.wav`);if(!response.ok)throw Error('Demonstration audio is unavailable.');
-        return context.decodeAudioData(await response.arrayBuffer());
+      const decodedAudio=await Promise.all(['intake','correction'].map(async name=>{
+        const response=await fetch(`/fixtures/${name}.wav`, { signal: controller.signal });if(!response.ok)throw Error('Demonstration audio is unavailable.');
+        const bytes=await response.arrayBuffer();
+        if(run!==generation || controller.signal.aborted)throw Error('Session cancelled');
+        return sessionContext.decodeAudioData(bytes);
       }));
       if(run!==generation)return;
+      guidedAudio=decodedAudio;
     } else {
       notice('Connecting your microphone…');
       const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-      if (run !== generation) { media.getTracks().forEach(t => t.stop()); return; }
+      if (run !== generation) { stopMediaTracks(media); return; }
       stream = media;
     }
     await context.audioWorklet.addModule('/audio-worklet.js');
@@ -183,6 +227,7 @@ $('stop').onclick = () => finish();
 $('consent').onchange = render;
 $('invite').oninput = render;
 $('sample').onclick = () => {
+  if (active || finishTask) return;
   state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = 'Fictional sample';
   const examples = [
     ['service', 'I need a quote to install a kitchen extractor fan.'],
@@ -194,10 +239,25 @@ $('sample').onclick = () => {
   for (const [field, text] of examples) { addTranscript(state, text); line('SAMPLE CALLER', text); capture(state, { field, value: text, status: 'known', evidence: text }); }
   notice('Fictional sample loaded. This did not use a microphone or AssemblyAI. Try correcting a detail, then prepare the review.'); render();
 };
-$('reset').onclick = async () => { await finish('Session cleared.'); state = createIntake(); $('transcript').replaceChildren(); $('mode').textContent = document.documentElement.dataset.mode==='sample'?'Interactive sample':requiresInvite?'Live voice prototype':'Local prototype'; render(); };
+$('reset').onclick = async () => {
+  // Join any in-flight recorder shutdown before removing session artifacts.
+  await finish('Session cleared.');
+  const link = $('video-download'), previousUrl = videoUrl || link.getAttribute('href');
+  if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
+  videoUrl = undefined; recordingLines = []; guidedAudio = []; guidedStep = 0; guidedMode = false;
+  link.removeAttribute('href'); link.removeAttribute('download'); link.hidden = true;
+  $('recording-preview').hidden = true;
+  const canvas = $('demo-canvas'); canvas.width = canvas.width;
+  $('value').value = ''; $('invite').value = ''; $('field').selectedIndex = 0;
+  $('review-text').textContent = ''; $('transcript').replaceChildren();
+  state = createIntake();
+  $('mode').textContent = document.documentElement.dataset.mode==='sample'?'Interactive sample':requiresInvite?'Live voice prototype':'Local prototype';
+  notice('Session cleared. Previously downloaded files and provider-held data are not deleted.');
+  render();
+};
 for (const [key, label] of Object.entries(fields)) { const option = document.createElement('option'); option.value = key; option.textContent = label; $('field').append(option); }
 $('correction').onsubmit = e => {
-  e.preventDefault(); if (active) return notice('End the conversation before making a manual correction.');
+  e.preventDefault(); if (active || finishTask) return notice('End the conversation before making a manual correction.');
   try { const text = $('value').value.trim(); addTranscript(state, text); capture(state, { field: $('field').value, status: 'known', value: text, evidence: text }); line('MANUAL CORRECTION', text); $('value').value = ''; render(); notice('Correction applied. Review the new version before downloading.'); }
   catch (error) { notice(error.message); }
 };
@@ -211,7 +271,7 @@ $('download').onclick = () => {
     notice('Reviewed draft downloaded. No request has been sent and no booking has been made.');
   } catch (error) { notice(error.message); }
 };
-window.addEventListener('pagehide', () => { stream?.getTracks().forEach(t => t.stop()); if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'session.end' })); ws?.close(); });
+window.addEventListener('pagehide', () => { generation++; try { startupAbort?.abort(); } catch {} stopMediaTracks(stream); closeTransport(ws); });
 try {
   if (document.documentElement.dataset.mode === 'sample') {
     $('mode').textContent = 'Interactive sample';

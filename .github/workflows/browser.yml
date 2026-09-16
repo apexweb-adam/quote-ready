@@ -1,0 +1,48 @@
+name: Offline browser privacy checks
+on:
+  push:
+    branches: ['maintenance/oss-readiness-2026-09-16']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: browser-privacy-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install isolated browser test tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/browser-env"
+          "$RUNNER_TEMP/browser-env/bin/pip" install playwright==1.61.0
+          "$RUNNER_TEMP/browser-env/bin/python" -m playwright install --with-deps chromium
+      - name: Reproduce clear-session regressions on the prior app
+        run: |
+          cp public/app.mjs "$RUNNER_TEMP/patched-app.mjs"
+          trap 'cp "$RUNNER_TEMP/patched-app.mjs" public/app.mjs; node scripts/build-static-demo.mjs' EXIT
+          git show f7b90fd52abcfa6cbf26473204169159dde4157f:public/app.mjs > public/app.mjs
+          node scripts/build-static-demo.mjs
+          PYTHONPATH=test-browser "$RUNNER_TEMP/browser-env/bin/python" - <<'PYTEST'
+          import unittest
+          names = ['test_clear_removes_hidden_review_content', 'test_clear_removes_unsubmitted_inputs', 'test_clear_removes_synthetic_recording_view']
+          suite = unittest.TestLoader().loadTestsFromNames(['test_offline.OfflineBrowserTests.' + name for name in names])
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if len(result.failures) != 3 or result.errors or result.skipped:
+              raise SystemExit('Expected exactly three assertion failures on the prior app; no environment errors or skips allowed')
+          print('BASELINE_VERIFIED: all three privacy assertions failed on the prior app as expected.')
+          PYTEST
+      - name: Build the keyless public sample
+        run: node scripts/build-static-demo.mjs
+      - name: Test real Chromium with synthetic fixtures and blocked provider requests
+        run: "$RUNNER_TEMP/browser-env/bin/python -m unittest discover -s test-browser -v"

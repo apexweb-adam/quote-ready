@@ -1,0 +1,30 @@
+name: Public account metadata audit
+on:
+  push:
+    branches: [maintenance/oss-readiness-2026-09-16]
+    paths: [.github/workflows/public-account-audit.yml]
+  workflow_dispatch:
+permissions: {}
+jobs:
+  public-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read public GitHub account creation timestamp
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request, datetime
+          url = 'https://api.github.com/users/apexweb-adam'
+          request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'QuoteReady-public-account-audit'})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              data = json.load(response)
+          if data.get('id') != 264683334 or data.get('login') != 'apexweb-adam':
+              raise SystemExit('Unexpected account identity; no conclusion drawn')
+          created = datetime.datetime.fromisoformat(data['created_at'].replace('Z', '+00:00'))
+          try:
+              anniversary = created.replace(year=created.year + 2)
+          except ValueError:
+              anniversary = created.replace(year=created.year + 2, month=3, day=1)
+          now = datetime.datetime.now(datetime.timezone.utc)
+          print(json.dumps({'source': url, 'retrieved_at': now.isoformat(), 'login': data['login'], 'id': data['id'], 'created_at': data['created_at'], 'two_year_anniversary_utc': anniversary.isoformat(), 'account_age_requirement_met_at_check': now >= anniversary, 'scope': 'Public account age only; not overall program eligibility or acceptance.'}, indent=2))
+          PY
