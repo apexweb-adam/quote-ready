@@ -1,0 +1,71 @@
+# is-malicious: scans the files a pull request changes for hidden, deceptive or data-stealing code
+# (TypeSafe Jev), posts the report on the PR and fails the check on a high finding.
+# Needs the repo secret TYPESAFE_API_KEY; without it (or on fork PRs) the scan is skipped, not failed.
+# Source reviewed and pinned 2026-09-28 (is-malicious 0.1.1).
+
+name: is-malicious
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: is-malicious-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Scan files changed in this PR
+        id: scan
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "TYPESAFE_API_KEY is not set for this run; skipping the scan."
+            echo "code=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          npx --yes is-malicious@0.1.1 . --diff-from "origin/${{ github.base_ref }}" | tee is-malicious-report.txt
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Comment report on the PR
+        if: always() && hashFiles('is-malicious-report.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "<!-- is-malicious-report -->"
+            echo "## is-malicious"
+            echo
+            echo '```'
+            cat is-malicious-report.txt
+            echo '```'
+          } > comment.md
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/comments" --jq '.[] | select(.body | contains("<!-- is-malicious-report -->")) | .id' | head -n 1)"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$(cat comment.md)"
+          else
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
+          fi
+
+      - name: Fail on high findings or a failed scan
+        if: steps.scan.outputs.code == '1' || steps.scan.outputs.code == '2'
+        run: exit 1
