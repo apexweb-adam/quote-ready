@@ -2,6 +2,25 @@
 
 Original AssemblyAI voice-intake prototype. Collects five service-request details with transcript evidence, supports corrections and unknown/declined answers, and produces a locally downloaded draft after explicit screen review. No quotes, bookings, emails or business-side records are created.
 
+## QuoteReady Relay: October 6 Alexa+ MCP extension
+
+The separate `mcp/` application adds a working MCP 2025-11-25 Streamable HTTP server, durable request resumption, user-supplied supplier offers, exclusions and currency warnings, and revision-aware screen review. A request correction makes earlier offers outdated; either a correction or a new offer invalidates prior approval. The assistant can prepare a draft, but its MCP tools cannot approve it. Download requires explicit review on the local page. Source evidence is client-supplied text and still requires human review.
+
+```sh
+cd mcp
+npm ci --ignore-scripts
+npm test
+npm start
+```
+
+Open http://127.0.0.1:4320 and run the fictional example. Compare the two synthetic offers, prepare and download a reviewed draft, change Friday to Monday, and inspect the outdated-offer warnings before reviewing again. Requests are saved to ignored `mcp/data/requests.json`; run only one server per data file. No paid API or hardware is required. This loopback demonstration has no public multi-user authentication or hosting configuration and must not be exposed as-is.
+
+An MCP client connects to `http://127.0.0.1:4320/mcp`. Available tools: `start_request`, `record_answer`, `inspect_request`, `add_supplier_offer`, `prepare_handoff`, `export_reviewed_handoff`. With the server running, `npm run demo` exercises the official SDK client and outputs synthetic integration evidence. Six new HTTP integration tests verify version negotiation, discovery, complete handoff, correction invalidation, concurrent revision conflicts, persisted resumption and invalid inputs. The browser is a scripted MCP client, not a live Alexa or language-model session; Alexa device/provider interoperability has not been tested. The original AssemblyAI app and its published submission remain separate.
+
+This extension is intended for the Amazon Developer Hackathon's Alexa+ MCP route, with an additional Open Source contribution. The official rules currently accept a self-hosted MCP server implementing 2025-11-25 over Streamable HTTP. Submission still requires a public YouTube/Vimeo demonstration, product feedback, eligible entrant details and final rule acceptance. No Amazon submission or prize is claimed here. Source and tests were prepared with Codex assistance; AWS services, Kiro, Alexa hardware and runtime Alexa access were not used.
+
+Rules checked October 6, 2026: https://amazonappdev2026.devpost.com/rules . Transport reference: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports . Runtime SDK: https://github.com/modelcontextprotocol/typescript-sdk .
+
 ## Run
 
 Node.js 20 or newer; the local application has no runtime package dependencies. `npm ci` installs the development types used for Netlify deployment.

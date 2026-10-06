@@ -7,3 +7,4 @@ node_modules/
 !public/fixtures/*.wav
 *.aiff
 .DS_Store
+mcp/data/
