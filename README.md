@@ -24,7 +24,8 @@ For live voice, provide `ASSEMBLYAI_API_KEY` through a private environment varia
 - Exact transcript matching establishes quote provenance, not semantic correctness of an AI-extracted value. The user must review the values and evidence.
 - Microphone capture resamples device-rate audio to 24 kHz PCM16; playback uses Web Audio buffers at 24 kHz. Browser/device audio QA remains required.
 - No server transcript storage. The optional guided-demo recorder saves only the synthesized caller and agent output in browser memory, with an explicit download. Microphone conversations are not recorded by the app. AssemblyAI handles live audio under its current processing and retention terms.
-- A six-slide presentation, captioned video and protected public voice app are available. A final contest submission receipt remains separate from event enrollment.
+- A six-slide presentation, captioned video and protected public voice app are available. The public contest entry is https://lablab.ai/submissions/j23hzxa3xpibnfekorve8rb8 . No award or payment is confirmed.
+- On October 6, 2026, all 26 local tests passed again. A fresh hosted API check captured five fields, changed Friday afternoon to Monday morning, invalidated the previous review and received agent audio. This synthetic check does not establish microphone quality or delivery of the private invitation to judges.
 
 ## Protocol references
 
@@ -43,6 +44,8 @@ With the local server configured, Node.js 22+ can run `scripts/live-voice-check.
 ```sh
 node scripts/live-voice-check.mjs 4318 intake.wav correction.wav evidence.json
 ```
+
+For the deployed app, pass `https://quote-ready-voice.netlify.app` in place of the port and provide the existing private `QUOTEREADY_INVITE_CODE` in the process environment. Never include the invitation in command arguments or evidence. The script restricts hosted checks to that exact origin.
 
 The output labels the input as synthesized speech. Passing requires actual provider transcripts, tool capture of every field, a corrected time, and invalidation of the old review. This is an API integration check, not proof of browser microphone quality.
 

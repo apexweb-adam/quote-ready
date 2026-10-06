@@ -20,8 +20,14 @@ async function pcm(path) {
   throw Error('WAV has no audio data');
 }
 const audio = [await pcm(firstPath), await pcm(correctionPath)];
-const origin = `http://127.0.0.1:${port}`;
-const response = await fetch(`${origin}/api/token`, { method: 'POST', headers: { Origin: origin, 'X-QuoteReady': 'voice' } });
+const origin = port.startsWith('https://') ? new URL(port).origin : `http://127.0.0.1:${port}`;
+const headers = { Origin: origin, 'X-QuoteReady': 'voice' };
+if (origin.startsWith('https://')) {
+  if (origin !== 'https://quote-ready-voice.netlify.app') throw Error('Unexpected hosted check target');
+  if (!process.env.QUOTEREADY_INVITE_CODE) throw Error('Hosted check requires a private invitation');
+  headers['X-QuoteReady-Invite'] = process.env.QUOTEREADY_INVITE_CODE;
+}
+const response = await fetch(`${origin}/api/token`, { method: 'POST', headers });
 const body = await response.json();
 if (!response.ok) throw Error(body.error || 'Token unavailable');
 const ws = new WebSocket(`wss://agents.assemblyai.com/v1/ws?token=${encodeURIComponent(body.token)}`);
