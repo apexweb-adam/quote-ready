@@ -65,6 +65,7 @@ export class RequestStore {
   }
   prepare(id) {
     return this.change(id, r => {
+      r.intake.confirmed = null;
       const intake = prepareReview(r.intake);
       const offers = r.offers.map(o => ({ ...o, stale: o.requestRevision !== r.intake.revision }));
       const warnings = [];

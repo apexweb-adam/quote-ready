@@ -44,6 +44,10 @@ test('full client flow catches incomparable offers and blocks export until exact
   const exported = (await call('export_reviewed_handoff', { requestId: r.id })).structuredContent;
   assert.equal(exported.reviewed, true); assert.equal(exported.booking, null); assert.equal(exported.payment, null);
   assert.equal(exported.offers.length, 2);
+  const refreshed = (await call('prepare_handoff', { requestId: r.id })).structuredContent;
+  assert.equal(refreshed.intake.status, 'ready-for-review');
+  assert.equal((await call('export_reviewed_handoff', { requestId: r.id })).isError, true);
+  assert.equal((await approve(origin, r.id, refreshed.snapshot)).status, 200);
   r = (await call('record_answer', { requestId: r.id, expectedRevision: r.revision, field: 'window', status: 'known', value: 'Monday morning', utterance: 'Monday morning instead' })).structuredContent;
   assert.equal(r.reviewed, false); assert.ok(r.offers.every(o => o.stale));
   assert.equal((await call('export_reviewed_handoff', { requestId: r.id })).isError, true);
