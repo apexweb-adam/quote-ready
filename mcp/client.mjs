@@ -9,6 +9,9 @@ async function initialize() {
   if (!response.ok || result.error || result.result?.protocolVersion !== '2025-11-25') throw Error('MCP 2025-11-25 initialization failed');
   const ready = await fetch('/mcp', { method: 'POST', headers: { ...headers, 'MCP-Protocol-Version': '2025-11-25' }, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) });
   if (!ready.ok) throw Error('MCP initialization notification failed');
+  const discovery = await fetch('/mcp', { method: 'POST', headers: { ...headers, 'MCP-Protocol-Version': '2025-11-25' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/list' }) });
+  const tools = await discovery.json();
+  if (!discovery.ok || tools.error || !Array.isArray(tools.result?.tools)) throw Error('MCP tool discovery failed');
 }
 async function tool(name, args) {
   await (initialization ||= initialize());

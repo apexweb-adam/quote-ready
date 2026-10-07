@@ -19,7 +19,24 @@ An MCP client connects to `http://127.0.0.1:4320/mcp`. Available tools: `start_r
 
 This extension is intended for the Amazon Developer Hackathon's Alexa+ MCP route, with an additional Open Source contribution. The official rules currently accept a self-hosted MCP server implementing 2025-11-25 over Streamable HTTP. Submission still requires a public YouTube/Vimeo demonstration, product feedback, eligible entrant details and final rule acceptance. No Amazon submission or prize is claimed here. Source and tests were prepared with Codex assistance; AWS services, Kiro, Alexa hardware and runtime Alexa access were not used.
 
-Rules checked October 6, 2026: https://amazonappdev2026.devpost.com/rules . Transport reference: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports . Runtime SDK: https://github.com/modelcontextprotocol/typescript-sdk .
+Rules and FAQ checked October 7, 2026: https://amazonappdev2026.devpost.com/rules and https://amazonappdev2026.devpost.com/details/faqs . The FAQ explicitly accepts a locally runnable public repository and a real browser MCP client; public hosting, physical Alexa hardware and preview-tool access are not required. Transport reference: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports . Runtime SDK: https://github.com/modelcontextprotocol/typescript-sdk .
+
+### Relay friction log
+
+Observed during Codex-assisted development on October 6, 2026. This is a defect in our own review-state integration, not an observed Amazon or MCP SDK defect. All request and supplier data in the reproduction are synthetic.
+
+| Field | Observation |
+| --- | --- |
+| Task attempted | Prepare a fresh handoff after reviewing and exporting the same request once. |
+| Steps | Complete the five request fields, add two supplier offers, call `prepare_handoff`, approve its snapshot on the local review page, export, then call `prepare_handoff` again without changing the answers. |
+| Expected result | The new draft reports `ready-for-review`; export remains blocked until the user reviews it again. |
+| Actual result before fix | The underlying intake retained its previous `confirmed` value while Relay cleared its separate approval. The fresh draft therefore carried an inconsistent already-confirmed intake status. This was not evidence of a booking, payment or supplier contact. |
+| Severity | Important: confusing state at the human-review boundary. The separate export approval guard still existed. |
+| Workaround and fix | Clear the intake confirmation when preparing a new review. Fixed in [commit c77d66a](https://github.com/apexweb-adam/quote-ready/commit/c77d66ad18520562b2672e79c61f17e1bb2d1a94). |
+| Verification | The existing HTTP integration test now asserts `ready-for-review`, rejected export before reapproval, and successful approval of the fresh snapshot. Run `cd mcp && npm test`; see `mcp/test/relay.test.mjs`, test `full client flow catches incomparable offers and blocks export until exact screen review`. |
+| Actionable suggestion | Treat preparing another review as explicit approval invalidation in every layer of an agent workflow; test the prepare, approve, export, prepare cycle rather than only the first successful export. |
+
+No Alexa preview SDK, device or service fault is claimed. The browser demo is a scripted real MCP client, not a live Alexa session. The organizers determine whether this log qualifies for any judging bonus.
 
 ## Run
 
